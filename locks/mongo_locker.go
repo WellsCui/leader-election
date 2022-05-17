@@ -35,12 +35,12 @@ func (locker *MongoDBLocker) Lock(ctx context.Context, resource string, options 
 	opts:=buildOptions(options)
 	var err error
 	var lock *Lock
-	if opts.Retry!=nil {
+	if opts.RetryOption!=nil {
 		err = Retry(ctx, func() error {
 			var lockErr error
 			lock, lockErr = locker.innerLock(ctx, resource, opts)
 			return lockErr
-		}, opts.Retry.RetryInterval )
+		}, RetryInterval(opts.RetryOption))
 		return lock, err
 	}
 	return locker.innerLock(ctx, resource, opts)
@@ -87,7 +87,7 @@ func (locker *MongoDBLocker) innerLock(ctx context.Context, resource string, opt
 			{Key: FieldID, Value: currentLock.ID},
 			{Key: FieldResource, Value: currentLock.Resource},
 			{Key: FieldOwner, Value: currentLock.Owner},
-			//{Key: FieldUpdatedAt, Value: currentLock.UpdatedAt},
+			{Key: FieldUpdatedAt, Value: currentLock.UpdatedAt},
 			// {Key: FieldExpiry, Value: currentLock.Expiry},
 		}
 		fmt.Printf("update filter: %+v \n", updateFilter)
@@ -136,7 +136,6 @@ func (locker *MongoDBLocker) Renew(ctx context.Context, lock *Lock) error {
 		{Key: FieldUpdatedAt, Value: lock.UpdatedAt},
 		// {Key: FieldAcquiredTime, Value: currentLock.AcquiredTime},
 	}
-	fmt.Printf("renew filter: %+v \n", filter)
 	updates := bson.M{"$set": bson.M{
 		FieldUpdatedAt: &updateTime,
 	}}

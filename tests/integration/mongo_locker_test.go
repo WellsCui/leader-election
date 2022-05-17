@@ -82,15 +82,13 @@ func TestMongoDBLocker(t *testing.T) {
 				lock, err = locker.Lock(ctx, "leadership4", locks.WithOwner("owner2"),
 					locks.WithExpiry(time.Hour),
 					locks.WithRenewExpiry(time.Second),
-					&locks.RetryOption{
-						RetryInterval: func(retries int, lastError error) (bool, time.Duration){
+					locks.WithRetry(func(retries int, lastError error) (bool, time.Duration){
 							if retries>10 {
 								return false, time.Millisecond
 							}
 							retryCount++
 							return true, time.Millisecond*300
-						},
-					})
+						}))
 				t.Logf("lock: %+v", lock)
 				t.Logf("lock error: %+v", err)
 				t.Logf("retry count: %+v", retryCount)
