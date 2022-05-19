@@ -8,12 +8,14 @@ import (
 )
 
 type (
+	// Election defines the attributes of an election 
 	Election struct {
 		Name    string
 		Tenure  time.Duration
 		Renewal time.Duration
 	}
 
+	// Manager manages the elections and tracks the leaders of the election
 	Manager struct {
 		mutex sync.RWMutex
 		elections []Election
