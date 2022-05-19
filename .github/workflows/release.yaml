@@ -1,4 +1,4 @@
-name: CI
+name: Release
 on: 
   push:
     # Sequence of patterns matched against refs/heads
@@ -9,8 +9,11 @@ on:
       - v*
 
 jobs:
+  test:
+      uses: ./.github/workflows/test.yml
+      secrets: inherit
   release:
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -18,4 +21,7 @@ jobs:
         run: |
           echo "VERSION=$(cat ./version.txt)" >> $GITHUB_ENV
           echo "VERSION=$(cat ./version.txt)"
+      - name: Release
+        run: |
+          echo "Version $VERSION released." 
       
