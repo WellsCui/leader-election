@@ -2,13 +2,14 @@ package leaderelection
 
 import (
 	"context"
-	"time"
-	"github.com/wellscui/leader-election/locks"
 	"sync"
+	"time"
+
+	"github.com/wellscui/leader-election/locks"
 )
 
 type (
-	// Election defines the attributes of an election 
+	// Election defines the attributes of an election
 	Election struct {
 		Name    string
 		Tenure  time.Duration
@@ -17,29 +18,29 @@ type (
 
 	// Manager manages the elections and tracks the leaders of the election
 	Manager struct {
-		mutex sync.RWMutex
+		mutex     sync.RWMutex
 		elections []Election
-		leaders map[string] string
-		locker locks.Locker
+		leaders   map[string]string
+		locker    locks.Locker
 		candidate string
 	}
 )
 
 func NewManger(candidate string, elections []Election, locker locks.Locker) *Manager {
-	rs:= &Manager{
+	rs := &Manager{
 		elections: elections,
-		locker: locker,
-		leaders: map[string]string{},
+		locker:    locker,
+		leaders:   map[string]string{},
 		candidate: candidate,
 	}
 	return rs
 }
 
-func(m *Manager) Start(ctx context.Context) error{
-	wg:= sync.WaitGroup{}
+func (m *Manager) Start(ctx context.Context) error {
+	wg := sync.WaitGroup{}
 	wg.Add(len(m.elections))
 	for _, election := range m.elections {
-		go func(election Election){
+		go func(election Election) {
 			m.LaunchElection(ctx, m.candidate, election)
 			wg.Done()
 		}(election)
@@ -51,19 +52,19 @@ func(m *Manager) Start(ctx context.Context) error{
 func (m *Manager) updateLeader(election string, leader string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	m.leaders[election]=leader
+	m.leaders[election] = leader
 }
 
 func (m *Manager) isLeader(election string) bool {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	return m.leaders[election]==m.candidate
+	return m.leaders[election] == m.candidate
 }
 
-func (m *Manager) LaunchElection(ctx context.Context, candidate string, election Election) error{
-	ticker:= time.NewTicker(election.Renewal)
+func (m *Manager) LaunchElection(ctx context.Context, candidate string, election Election) error {
+	ticker := time.NewTicker(election.Renewal)
 	defer ticker.Stop()
-	elected:=false
+	elected := false
 	var lock *locks.Lock
 	var err error
 	for {
@@ -74,17 +75,16 @@ func (m *Manager) LaunchElection(ctx context.Context, candidate string, election
 			if elected {
 				err = m.locker.Renew(ctx, lock)
 			} else {
-				lock, err = m.locker.Lock(ctx,election.Name, 
+				lock, err = m.locker.Lock(ctx, election.Name,
 					locks.WithOwner(candidate),
-					locks.WithExpiry(election.Tenure), 
-					locks.WithRenewExpiry(election.Renewal))
+					locks.WithExpiry(election.Tenure),
+					locks.WithUpdateExpiry(election.Renewal))
 			}
-			
+
 			elected = (err == nil)
-			if lock!= nil {
+			if lock != nil {
 				m.updateLeader(election.Name, lock.Owner)
 			}
 		}
 	}
 }
-

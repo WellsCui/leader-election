@@ -2,18 +2,17 @@ package locks
 
 import (
 	"context"
-	"fmt"
 	"time"
 )
 
 type (
 	Lock struct {
-		ID           string     `json:"id"`
-		Resource     string     `json:"resource"`
-		Owner        string     `json:"owner"`
-		AcquiredTime *time.Time `json:"acquiredTime"`
-		UpdatedAt    *time.Time `json:"updatedAt"`
-		Expiry       *time.Time `json:"expiry"`
+		ID           string     `bson:"id"`
+		Resource     string     `bson:"resource"`
+		Owner        string     `bson:"owner"`
+		AcquiredTime *time.Time `bson:"acquiredTime"`
+		UpdatedAt    *time.Time `bson:"updatedAt"`
+		Expiry       *time.Time `bson:"expiry"`
 	}
 
 	LockOption interface {
@@ -25,10 +24,10 @@ type (
 	WithRetry RetryInterval
 
 	LockOptions struct {
-		Owner       string
-		Expiry      *time.Duration
-		RenewExpiry *time.Duration
-		RetryOption WithRetry
+		Owner        string
+		Expiry       *time.Duration
+		UpdateExpiry *time.Duration
+		RetryOption  WithRetry
 	}
 
 	Locker interface {
@@ -37,9 +36,9 @@ type (
 		Renew(ctx context.Context, lock *Lock) error
 	}
 
-	WithOwner       string
-	WithExpiry      time.Duration
-	WithRenewExpiry time.Duration
+	WithOwner        string
+	WithExpiry       time.Duration
+	WithUpdateExpiry time.Duration
 )
 
 func buildOptions(opts []LockOption) *LockOptions {
@@ -58,20 +57,18 @@ func (expiry WithExpiry) Apply(options *LockOptions) {
 	options.Expiry = (*time.Duration)(&expiry)
 }
 
-func (expiry WithRenewExpiry) Apply(options *LockOptions) {
-	options.RenewExpiry = (*time.Duration)(&expiry)
+func (expiry WithUpdateExpiry) Apply(options *LockOptions) {
+	options.UpdateExpiry = (*time.Duration)(&expiry)
 }
 
 func (option WithRetry) Apply(options *LockOptions) {
 	options.RetryOption = option
 }
 
-func (l *Lock) Expired(renewExpiry *time.Duration) bool {
+func (l *Lock) Expired(updateExpiry *time.Duration) bool {
 	expired := l.Expiry != nil && time.Now().After(*l.Expiry)
-	updateDeadLine := time.Now().Add(-*renewExpiry)
-	updateExpired := renewExpiry != nil && (l.UpdatedAt == nil || l.UpdatedAt.Before(updateDeadLine))
-	fmt.Printf("expired: %v, updateExpired: %v, renewDeadLine: %v, UpdatedAt: %v, updateDeadLine: %v \n",
-		expired, updateExpired, renewExpiry, l.UpdatedAt, updateDeadLine)
+	updateDeadLine := time.Now().Add(-*updateExpiry)
+	updateExpired := updateExpiry != nil && (l.UpdatedAt == nil || l.UpdatedAt.Before(updateDeadLine))
 	return expired || updateExpired
 }
 
