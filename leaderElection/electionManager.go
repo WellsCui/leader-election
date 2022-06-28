@@ -41,7 +41,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	wg.Add(len(m.elections))
 	for _, election := range m.elections {
 		go func(election Election) {
-			m.LaunchElection(ctx, m.candidate, election)
+			m.launchElection(ctx, election)
 			wg.Done()
 		}(election)
 	}
@@ -55,36 +55,31 @@ func (m *Manager) updateLeader(election string, leader string) {
 	m.leaders[election] = leader
 }
 
-func (m *Manager) isLeader(election string) bool {
+func (m *Manager) IsLeader(election string) bool {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	return m.leaders[election] == m.candidate
 }
 
-func (m *Manager) LaunchElection(ctx context.Context, candidate string, election Election) error {
-	ticker := time.NewTicker(election.Renewal)
+func (m *Manager) launchElection(ctx context.Context, election Election) error {
+	ticker := time.NewTicker(election.Renewal / 2)
 	defer ticker.Stop()
-	elected := false
-	var lock *locks.Lock
 	var err error
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if elected {
-				err = m.locker.Renew(ctx, lock)
-			} else {
-				lock, err = m.locker.Lock(ctx, election.Name,
-					locks.WithOwner(candidate),
-					locks.WithExpiry(election.Tenure),
-					locks.WithUpdateExpiry(election.Renewal))
-			}
+			_, err = m.locker.Lock(ctx, election.Name,
+				locks.WithOwner(m.candidate),
+				locks.WithExpiry(election.Tenure),
+				locks.WithUpdateExpiry(election.Renewal))
 
-			elected = (err == nil)
-			if lock != nil {
-				m.updateLeader(election.Name, lock.Owner)
+			leader := m.candidate
+			if err != nil {
+				leader = ""
 			}
+			m.updateLeader(election.Name, leader)
 		}
 	}
 }

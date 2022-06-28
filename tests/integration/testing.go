@@ -176,7 +176,7 @@ func (svc *DockerService) Start() (*DockerServiceInstance, error) {
 	// Pull the image, create a container based on the image, and run the container.
 	resource, err := pool.RunWithOptions(runOptions)
 	if err != nil {
-		return nil, fmt.Errorf("error running qix-sessions container, %w", err)
+		return nil, fmt.Errorf("error running container, %w", err)
 	}
 
 	hostname := resource.Container.NetworkSettings.IPAddress
