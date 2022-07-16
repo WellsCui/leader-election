@@ -23,15 +23,17 @@ type (
 		leaders   map[string]string
 		locker    locks.Locker
 		candidate string
+		getPriority func() int
 	}
 )
 
-func NewManger(candidate string, elections []Election, locker locks.Locker) *Manager {
+func NewManger(candidate string, elections []Election, locker locks.Locker, getPriority func() int) *Manager {
 	rs := &Manager{
 		elections: elections,
 		locker:    locker,
 		leaders:   map[string]string{},
 		candidate: candidate,
+		getPriority: getPriority,
 	}
 	return rs
 }
@@ -55,10 +57,18 @@ func (m *Manager) updateLeader(election string, leader string) {
 	m.leaders[election] = leader
 }
 
-func (m *Manager) IsLeader(election string) bool {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	return m.leaders[election] == m.candidate
+func (m *Manager) IsLeader(ctx context.Context, election string) bool {
+	leader, _ := m.FindLeader(ctx, election)
+	return leader == m.candidate
+}
+
+func (m *Manager) FindLeader(ctx context.Context, election string) (string, error) {
+	lock, err := m.locker.Find(ctx, election)
+	if err != nil {
+		return "", err
+	}
+
+	return lock.Owner, nil
 }
 
 func (m *Manager) launchElection(ctx context.Context, election Election) error {
@@ -72,8 +82,12 @@ func (m *Manager) launchElection(ctx context.Context, election Election) error {
 			lock, _ := m.locker.Lock(ctx, election.Name,
 				locks.WithOwner(m.candidate),
 				locks.WithExpiry(election.Tenure),
-				locks.WithUpdateExpiry(election.Renewal))
-			m.updateLeader(election.Name, lock.Owner)
+				locks.WithUpdateExpiry(election.Renewal),
+				locks.WithPriority(m.getPriority()),
+			)
+			if lock!=nil {
+				m.updateLeader(election.Name, lock.Owner)
+			}
 		}
 	}
 }

@@ -18,6 +18,7 @@ const (
 	FieldAcquiredTime = "acquiredTime"
 	FieldUpdatedAt    = "updatedAt"
 	FieldExpiry       = "expiry"
+	FieldPriority     = "priority"
 )
 
 type MongoDBLocker struct {
@@ -45,11 +46,31 @@ func (locker *MongoDBLocker) Lock(ctx context.Context, resource string, options 
 	return locker.innerLock(ctx, resource, opts)
 }
 
-func (locker *MongoDBLocker) innerLock(ctx context.Context, resource string, options *LockOptions) (*Lock, error) {
+func conditionalUpdate(fieldName string, cond, updateValue interface{}) bson.E {
+	return bson.E{Key: fieldName, Value: bson.M{
+		"$cond": bson.M{
+			"if":   cond,
+			"then": updateValue,
+			"else": "$" + fieldName,
+		},
+	}}
+}
+
+func (locker *MongoDBLocker) innerLock(ctx context.Context, resource string, options *lockOptions) (*Lock, error) {
 	filter := bson.D{{Key: FieldResource, Value: resource}}
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	expiredCond := bson.M{"$lt": []interface{}{"$" + FieldExpiry, &now}}
-	
+
+	updateConds := []bson.M{{"$lt": []interface{}{"$" + FieldExpiry, &now}}}
+	if options.Priority != nil {
+		updateConds = append(updateConds, bson.M{"$lt": []interface{}{"$" + FieldPriority, options.Priority}})
+	}
+	if options.UpdateExpiry!= nil {
+		updateExpiry := now.Add(-*options.UpdateExpiry)
+		updateConds = append(updateConds, bson.M{"$lt": []interface{}{"$" + FieldUpdatedAt, updateExpiry}})
+	}
+
+	updateCond := bson.M{ "$or": updateConds}
+
 	updateTime := &now
 	acquiredTime := &now
 	var expiry *time.Time
@@ -58,23 +79,14 @@ func (locker *MongoDBLocker) innerLock(ctx context.Context, resource string, opt
 		expiry = &deadLine
 	}
 
-	conditionalUpdate := func(fieldName string, expiredCond, updateValue interface{}) bson.E {
-		return bson.E{Key: fieldName, Value: bson.M{
-			"$cond": bson.M{
-				"if":   expiredCond,
-				"then": updateValue,
-				"else": "$" + fieldName,
-			},
-		}}
-	}
-
 	updates := bson.A{bson.M{
 		"$set": bson.D{
 			{Key: FieldResource, Value: resource},
-			conditionalUpdate(FieldOwner, expiredCond, options.Owner),
-			conditionalUpdate(FieldUpdatedAt, expiredCond, updateTime),
-			conditionalUpdate(FieldAcquiredTime, expiredCond, acquiredTime),
-			conditionalUpdate(FieldExpiry, expiredCond, expiry),
+			conditionalUpdate(FieldOwner, updateCond, options.Owner),
+			conditionalUpdate(FieldUpdatedAt, updateCond, updateTime),
+			conditionalUpdate(FieldAcquiredTime, updateCond, acquiredTime),
+			conditionalUpdate(FieldExpiry, updateCond, expiry),
+			conditionalUpdate(FieldPriority, updateCond, options.Priority),
 		},
 	}}
 	upsert := true
@@ -93,7 +105,7 @@ func (locker *MongoDBLocker) innerLock(ctx context.Context, resource string, opt
 		return nil, fmt.Errorf("failed to decode the lock: %w", err)
 	}
 
-	if lock.Owner!=options.Owner {
+	if lock.Owner != options.Owner {
 		return lock, fmt.Errorf("resource has been acquired by other owner")
 	}
 	return lock, nil
@@ -125,14 +137,30 @@ func (locker *MongoDBLocker) Renew(ctx context.Context, lock *Lock) error {
 	updates := bson.M{"$set": bson.M{
 		FieldExpiry:    lock.Expiry,
 		FieldUpdatedAt: &updateTime,
+		FieldPriority: lock.Priority,
 	}}
 	rs, err := locker.db.Collection(LockCollection).UpdateOne(ctx, filter, updates)
 	if err != nil {
-		return fmt.Errorf("failed to update the lock: %w", err)
+		return fmt.Errorf("failed to renew the lock: %w", err)
 	}
 	if rs.ModifiedCount == 0 {
 		return fmt.Errorf("resource has been acquired by other owner")
 	}
 	lock.UpdatedAt = &updateTime
 	return nil
+}
+
+func (locker *MongoDBLocker) Find(ctx context.Context, resource string) (*Lock, error) {
+	filter := bson.D{
+		{Key: FieldResource, Value: resource},
+	}
+	rs:=locker.db.Collection(LockCollection).FindOne(ctx, filter)
+	if rs.Err()!=nil {
+		return nil, fmt.Errorf("failed to find lock: %w", rs.Err())
+	}
+	lock := &Lock{}
+	if err := rs.Decode(&lock); err != nil {
+		return nil, fmt.Errorf("failed to decode the lock: %w", err)
+	}
+	return lock, nil
 }

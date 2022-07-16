@@ -39,8 +39,10 @@ func TestManager(t *testing.T) {
 				rs.Mock.On("Lock", mock.Anything, "leaderShip1",
 					locks.WithOwner("candidate1"),
 					locks.WithExpiry(time.Second),
-					locks.WithUpdateExpiry(time.Millisecond*100)).Return(lock, nil)
-				rs.Mock.On("Renew", mock.Anything, lock).Return(nil)
+					locks.WithUpdateExpiry(time.Millisecond*100),
+					mock.Anything,
+					).Return(lock, nil)
+				
 				return rs
 			}(),
 		},
@@ -49,7 +51,9 @@ func TestManager(t *testing.T) {
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
-			manager := NewManger("candidate1", cs.elections, cs.locker)
+			manager := NewManger("candidate1", cs.elections, cs.locker, func() int {
+				return 0
+			})
 			go func() {
 				time.Sleep(time.Second * 2)
 				cancel()

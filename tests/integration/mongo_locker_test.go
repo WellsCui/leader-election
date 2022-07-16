@@ -45,6 +45,46 @@ func TestMongoDBLocker(t *testing.T) {
 			},
 		},
 		{
+			name: "should succeed when lock is not updated in time",
+			expects: func(t *testing.T) {
+				originalLock, err := locker.Lock(ctx, "leadership2", locks.WithOwner("owner1"),
+					locks.WithExpiry(time.Hour),
+					locks.WithUpdateExpiry(time.Millisecond))
+				require.NoError(t, err)
+				require.NotNil(t, originalLock)
+				t.Log("lock:", originalLock)
+				time.Sleep(time.Millisecond)
+				updatedLock, err := locker.Lock(ctx, "leadership2", locks.WithOwner("owner2"),
+					locks.WithExpiry(time.Hour),
+					locks.WithUpdateExpiry(locks.WithUpdateExpiry(time.Millisecond)))
+				require.NoError(t, err)
+				require.NotEqual(t, originalLock, updatedLock)
+				require.Equal(t, "owner2", updatedLock.Owner)
+			},
+		},
+		{
+			name: "should succeed with higher priority",
+			expects: func(t *testing.T) {
+				originalLock, err := locker.Lock(ctx, "leadership2", locks.WithOwner("owner1"),
+					locks.WithExpiry(time.Hour),
+					locks.WithUpdateExpiry(time.Minute),
+					locks.WithPriority(1),
+				)
+				require.NoError(t, err)
+				require.NotNil(t, originalLock)
+				t.Log("lock:", originalLock)
+				updatedLock, err := locker.Lock(ctx, "leadership2", locks.WithOwner("owner2"),
+					locks.WithExpiry(time.Hour),
+					locks.WithUpdateExpiry(locks.WithUpdateExpiry(time.Minute)),
+					locks.WithPriority(2),
+				)
+				require.NoError(t, err)
+				require.NotEqual(t, originalLock, updatedLock)
+				require.Equal(t, "owner2", updatedLock.Owner)
+				require.Equal(t, 2, *updatedLock.Priority)
+			},
+		},
+		{
 			name: "should be able to lock after unlock",
 			expects: func(t *testing.T) {
 				lock, err := locker.Lock(ctx, "leadership3", locks.WithOwner("owner1"),
@@ -75,7 +115,7 @@ func TestMongoDBLocker(t *testing.T) {
 					locks.WithUpdateExpiry(time.Millisecond*200))
 				require.NoError(t, err)
 				require.NotEqual(t, originalLock, newlock)
-                require.Equal(t, "owner2", newlock.Owner)
+				require.Equal(t, "owner2", newlock.Owner)
 			},
 		},
 		{
@@ -117,7 +157,7 @@ func TestMongoDBLocker(t *testing.T) {
 				t.Logf("lock error: %+v", err)
 				require.NoError(t, err)
 				require.NotNil(t, lock)
-				time.Sleep(time.Millisecond*800)
+				time.Sleep(time.Millisecond * 800)
 				require.NoError(t, locker.Renew(ctx, lock))
 				lock, err = locker.Lock(ctx, "leadership6", locks.WithOwner("owner2"),
 					locks.WithExpiry(time.Hour),

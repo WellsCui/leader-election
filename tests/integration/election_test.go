@@ -25,8 +25,13 @@ func TestLeaderelection(t *testing.T) {
 	locker1 := locks.NewMongoDBLocker(db1)
 	locker2 := locks.NewMongoDBLocker(db2)
 
-	candidate1:= leaderelection.NewManger("candidate1", []leaderelection.Election{election},  locker1)
-	candidate2:= leaderelection.NewManger("candidate2", []leaderelection.Election{election},  locker2)
+	candidate1:= leaderelection.NewManger("candidate1", 
+	[]leaderelection.Election{election},  locker1, func() int {
+		return 1
+	} )
+	candidate2:= leaderelection.NewManger("candidate2", []leaderelection.Election{election}, locker2, func() int {
+		return 1
+	} )
 	go func(){
 		candidate1.Start(ctx)
 	}()
@@ -39,7 +44,7 @@ func TestLeaderelection(t *testing.T) {
 	for {
 		select {
 		case <- ticker.C:
-			fmt.Printf("candidate1: %v, candidate2: %v \n", candidate1.IsLeader("monitor_leader"), candidate2.IsLeader("monitor_leader"))
+			fmt.Printf("candidate1: %v, candidate2: %v \n", candidate1.IsLeader(ctx, "monitor_leader"), candidate2.IsLeader(ctx, "monitor_leader"))
 		case <- ctx.Done():
 			return 
 		}
