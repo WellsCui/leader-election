@@ -64,22 +64,16 @@ func (m *Manager) IsLeader(election string) bool {
 func (m *Manager) launchElection(ctx context.Context, election Election) error {
 	ticker := time.NewTicker(election.Renewal / 2)
 	defer ticker.Stop()
-	var err error
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			_, err = m.locker.Lock(ctx, election.Name,
+			lock, _ := m.locker.Lock(ctx, election.Name,
 				locks.WithOwner(m.candidate),
 				locks.WithExpiry(election.Tenure),
 				locks.WithUpdateExpiry(election.Renewal))
-
-			leader := m.candidate
-			if err != nil {
-				leader = ""
-			}
-			m.updateLeader(election.Name, leader)
+			m.updateLeader(election.Name, lock.Owner)
 		}
 	}
 }

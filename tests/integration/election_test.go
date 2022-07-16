@@ -35,7 +35,7 @@ func TestLeaderelection(t *testing.T) {
 		candidate2.Start(ctx)
 	}()
 
-	ticker:=time.NewTicker(time.Millisecond*500)
+	ticker:=time.NewTicker(time.Second)
 	for {
 		select {
 		case <- ticker.C:

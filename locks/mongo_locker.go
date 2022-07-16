@@ -2,14 +2,12 @@ package locks
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
-	// mongoOptions "go.mongodb.org/mongo-driver/mongo/options"
+	mongoOptions "go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
@@ -49,67 +47,60 @@ func (locker *MongoDBLocker) Lock(ctx context.Context, resource string, options 
 
 func (locker *MongoDBLocker) innerLock(ctx context.Context, resource string, options *LockOptions) (*Lock, error) {
 	filter := bson.D{{Key: FieldResource, Value: resource}}
-	rs := locker.db.Collection(LockCollection).FindOne(ctx, filter)
-	acquiredTime := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	expiredCond := bson.M{"$lt": []interface{}{"$" + FieldExpiry, &now}}
+	
+	updateTime := &now
+	acquiredTime := &now
 	var expiry *time.Time
 	if options.Expiry != nil {
 		deadLine := acquiredTime.Add(*options.Expiry).UTC()
 		expiry = &deadLine
 	}
-	newLock := &Lock{
-		ID:           primitive.NewObjectID().Hex(),
-		Resource:     resource,
-		Owner:        options.Owner,
-		AcquiredTime: &acquiredTime,
-		UpdatedAt:    &acquiredTime,
-		Expiry:       expiry,
-	}
-	switch {
-	case rs.Err() != nil && rs.Err() != mongo.ErrNoDocuments:
-		return nil, fmt.Errorf("failed to lock: %w", rs.Err())
-	case rs.Err() != nil && rs.Err() == mongo.ErrNoDocuments:
-		_, err := locker.db.Collection(LockCollection).InsertOne(ctx, newLock)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create the lock: %w", err)
-		}
-		return newLock, nil
-	default:
-		currentLock := &Lock{}
-		err := rs.Decode(currentLock)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode lock: %w", rs.Err())
-		}
-		if !currentLock.Expired(options.UpdateExpiry) {
-			return nil, errors.New("resource has been locked by other owner")
-		}
 
-		updateFilter := bson.D{
-			{Key: FieldID, Value: currentLock.ID},
-			{Key: FieldResource, Value: currentLock.Resource},
-			{Key: FieldOwner, Value: currentLock.Owner},
-			{Key: FieldUpdatedAt, Value: currentLock.UpdatedAt},
-		}
-		newLock.ID = currentLock.ID
-		updates := bson.M{"$set": bson.M{
-			FieldOwner:        newLock.Owner,
-			FieldAcquiredTime: newLock.AcquiredTime,
-			FieldUpdatedAt:    newLock.UpdatedAt,
-			FieldExpiry:       newLock.Expiry,
+	conditionalUpdate := func(fieldName string, expiredCond, updateValue interface{}) bson.E {
+		return bson.E{Key: fieldName, Value: bson.M{
+			"$cond": bson.M{
+				"if":   expiredCond,
+				"then": updateValue,
+				"else": "$" + fieldName,
+			},
 		}}
-		updateResult, err := locker.db.Collection(LockCollection).UpdateOne(ctx, updateFilter, updates)
-		if err != nil {
-			return nil, fmt.Errorf("failed to update the lock: %w", err)
-		}
-		if updateResult.ModifiedCount == 0 {
-			return nil, fmt.Errorf("resource has been acquired by other owner")
-		}
-		return newLock, nil
 	}
+
+	updates := bson.A{bson.M{
+		"$set": bson.D{
+			{Key: FieldResource, Value: resource},
+			conditionalUpdate(FieldOwner, expiredCond, options.Owner),
+			conditionalUpdate(FieldUpdatedAt, expiredCond, updateTime),
+			conditionalUpdate(FieldAcquiredTime, expiredCond, acquiredTime),
+			conditionalUpdate(FieldExpiry, expiredCond, expiry),
+		},
+	}}
+	upsert := true
+	returnDocument := mongoOptions.After
+
+	rs := locker.db.Collection(LockCollection).FindOneAndUpdate(ctx, filter, updates, &mongoOptions.FindOneAndUpdateOptions{
+		Upsert:         &upsert,
+		ReturnDocument: &returnDocument,
+	})
+
+	if rs.Err() != nil {
+		return nil, fmt.Errorf("failed to acquire the lock: %w", rs.Err())
+	}
+	lock := &Lock{}
+	if err := rs.Decode(&lock); err != nil {
+		return nil, fmt.Errorf("failed to decode the lock: %w", err)
+	}
+
+	if lock.Owner!=options.Owner {
+		return lock, fmt.Errorf("resource has been acquired by other owner")
+	}
+	return lock, nil
 }
 
 func (locker *MongoDBLocker) Unlock(ctx context.Context, lock *Lock) error {
 	filter := bson.D{
-		{Key: FieldID, Value: lock.ID},
 		{Key: FieldResource, Value: lock.Resource},
 		{Key: FieldOwner, Value: lock.Owner},
 		{Key: FieldUpdatedAt, Value: lock.UpdatedAt},
@@ -125,15 +116,14 @@ func (locker *MongoDBLocker) Unlock(ctx context.Context, lock *Lock) error {
 }
 
 func (locker *MongoDBLocker) Renew(ctx context.Context, lock *Lock) error {
-	updateTime := time.Now().UTC()
+	updateTime := time.Now().UTC().Truncate(time.Millisecond)
 	filter := bson.D{
-		{Key: FieldID, Value: lock.ID},
 		{Key: FieldResource, Value: lock.Resource},
 		{Key: FieldOwner, Value: lock.Owner},
 		{Key: FieldUpdatedAt, Value: lock.UpdatedAt},
 	}
 	updates := bson.M{"$set": bson.M{
-		FieldExpiry: lock.Expiry,
+		FieldExpiry:    lock.Expiry,
 		FieldUpdatedAt: &updateTime,
 	}}
 	rs, err := locker.db.Collection(LockCollection).UpdateOne(ctx, filter, updates)

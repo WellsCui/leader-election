@@ -23,6 +23,7 @@ func TestMongoDBLocker(t *testing.T) {
 			name: "should be able to create lock",
 			expects: func(t *testing.T) {
 				lock, err := locker.Lock(ctx, "leadership1")
+				t.Log("lock:", lock)
 				require.NoError(t, err)
 				require.NotNil(t, lock)
 			},
@@ -30,16 +31,17 @@ func TestMongoDBLocker(t *testing.T) {
 		{
 			name: "should fail to lock if lock is not expired",
 			expects: func(t *testing.T) {
-				lock, err := locker.Lock(ctx, "leadership2", locks.WithOwner("owner1"),
+				originalLock, err := locker.Lock(ctx, "leadership2", locks.WithOwner("owner1"),
 					locks.WithExpiry(time.Hour),
 					locks.WithUpdateExpiry(time.Minute))
 				require.NoError(t, err)
-				require.NotNil(t, lock)
-				lock, err = locker.Lock(ctx, "leadership2", locks.WithOwner("owner2"),
+				require.NotNil(t, originalLock)
+				t.Log("lock:", originalLock)
+				updatedLock, err := locker.Lock(ctx, "leadership2", locks.WithOwner("owner2"),
 					locks.WithExpiry(time.Hour),
 					locks.WithUpdateExpiry(locks.WithUpdateExpiry(time.Minute)))
 				require.Error(t, err)
-				require.Nil(t, lock)
+				require.Equal(t, originalLock, updatedLock)
 			},
 		},
 		{
@@ -52,7 +54,6 @@ func TestMongoDBLocker(t *testing.T) {
 				require.NotNil(t, lock)
 				err = locker.Unlock(ctx, lock)
 				require.NoError(t, err)
-
 				lock, err = locker.Lock(ctx, "leadership3", locks.WithOwner("owner2"),
 					locks.WithExpiry(time.Hour),
 					locks.WithUpdateExpiry(locks.WithUpdateExpiry(time.Minute)))
@@ -63,24 +64,25 @@ func TestMongoDBLocker(t *testing.T) {
 		{
 			name: "should lock successfully if lock is expired",
 			expects: func(t *testing.T) {
-				lock, err := locker.Lock(ctx, "leadership4", locks.WithOwner("owner1"),
-					locks.WithExpiry(time.Hour),
-					locks.WithUpdateExpiry(time.Minute))
+				originalLock, err := locker.Lock(ctx, "leadership4", locks.WithOwner("owner1"),
+					locks.WithExpiry(time.Millisecond*200),
+					locks.WithUpdateExpiry(time.Millisecond*200))
 				require.NoError(t, err)
-				require.NotNil(t, lock)
-				time.Sleep(time.Millisecond)
-				lock, err = locker.Lock(ctx, "leadership4", locks.WithOwner("owner2"),
-					locks.WithExpiry(time.Hour),
-					locks.WithUpdateExpiry(time.Millisecond))
+				require.NotNil(t, originalLock)
+				time.Sleep(time.Second)
+				newlock, err := locker.Lock(ctx, "leadership4", locks.WithOwner("owner2"),
+					locks.WithExpiry(time.Millisecond*200),
+					locks.WithUpdateExpiry(time.Millisecond*200))
 				require.NoError(t, err)
-				require.NotNil(t, lock)
+				require.NotEqual(t, originalLock, newlock)
+                require.Equal(t, "owner2", newlock.Owner)
 			},
 		},
 		{
 			name: "should retry until success",
 			expects: func(t *testing.T) {
 				lock, err := locker.Lock(ctx, "leadership5", locks.WithOwner("owner1"),
-					locks.WithExpiry(time.Hour),
+					locks.WithExpiry(time.Second),
 					locks.WithUpdateExpiry(time.Second))
 				t.Logf("lock: %+v", lock)
 				t.Logf("lock error: %+v", err)
@@ -88,7 +90,7 @@ func TestMongoDBLocker(t *testing.T) {
 				require.NotNil(t, lock)
 				retryCount := 0
 				lock, err = locker.Lock(ctx, "leadership5", locks.WithOwner("owner2"),
-					locks.WithExpiry(time.Hour),
+					locks.WithExpiry(time.Second),
 					locks.WithUpdateExpiry(time.Second),
 					locks.WithRetry(func(retries int, lastError error) (bool, time.Duration) {
 						if retries > 10 {
@@ -117,13 +119,13 @@ func TestMongoDBLocker(t *testing.T) {
 				require.NotNil(t, lock)
 				time.Sleep(time.Millisecond*800)
 				require.NoError(t, locker.Renew(ctx, lock))
-				lock, err = locker.Lock(ctx, "leadership5", locks.WithOwner("owner2"),
+				lock, err = locker.Lock(ctx, "leadership6", locks.WithOwner("owner2"),
 					locks.WithExpiry(time.Hour),
 					locks.WithUpdateExpiry(time.Second))
 				t.Logf("lock: %+v", lock)
 				t.Logf("lock error: %+v", err)
 				require.Error(t, err)
-				require.Nil(t, lock)
+				require.Equal(t, "owner1", lock.Owner)
 			},
 		},
 	}
